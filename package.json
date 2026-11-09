@@ -1,0 +1,55 @@
+{
+  "name": "dsh-plugin-desktop-hud",
+  "version": "1.0.0",
+  "description": "An always-on-top desktop card for DeepSeek Harness (DSH): see running tasks, approval requests and completed turns at a glance, with a multi-session task list.",
+  "license": "MIT",
+  "author": "D00023",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D00023/dsh-plugin-desktop-hud.git"
+  },
+  "homepage": "https://github.com/D00023/dsh-plugin-desktop-hud#readme",
+  "bugs": {
+    "url": "https://github.com/D00023/dsh-plugin-desktop-hud/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "desktop",
+    "hud",
+    "notification",
+    "wpf",
+    "cordis-plugin"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "icon": "icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "hud-state.js",
+    "hud-bridge.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "overlay/bin/HUD.exe",
+    "overlay/build.ps1",
+    "overlay/UI-SPEC.md",
+    "PROTOCOL.md",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "docs/images/*.png"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

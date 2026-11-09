@@ -1,0 +1,20 @@
+# Dependencies (none at runtime, but keep npm artifacts out)
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+
+# Local traces / debug output
+*.log
+*.trace
+.dsh-tmp/
+scratch-*/
+
+# Build intermediates
+overlay/bin-dev/
+overlay/obj/
+overlay/*.tmp
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store
