@@ -20,6 +20,15 @@ import { createHudBridge } from './hud-bridge.js';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OVERLAY_EXE = path.join(HERE, 'overlay', 'bin', 'HUD.exe');
 
+/**
+ * Guard against the Host applying this bundle more than once in the same
+ * lifetime. Observed on 2026-11-12 (hud.log): two `starting desktop HUD bridge`
+ * lines 2.4 s apart, each spawning its own HUD.exe, so the user saw two cards.
+ * `Symbol.for` is shared by every module instance inside the Host realm, so the
+ * first applicator owns the bridge and later ones only keep it alive.
+ */
+const LIVE_SYMBOL = Symbol.for('@local/dsh-desktop-hud.live');
+
 /** Small rolling log so the HUD lifecycle can be diagnosed without a console. */
 const LOG_DIR = path.join(
   process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
@@ -75,6 +84,22 @@ const MAX_TITLE_HOPS = 5;
 
 export function apply(ctx) {
   const log = createLogger(ctx.logger ?? console);
+
+  const live = globalThis[LIVE_SYMBOL];
+  if (live) {
+    // Never create a second state machine/bridge: that is what produced two
+    // windows. Reuse the live instance (and keep it alive if it gave up).
+    log.warn('duplicate apply detected: the desktop HUD is already mounted; reusing the live instance');
+    const stack = new Error('duplicate apply').stack;
+    if (stack) log.warn(`duplicate apply stack:\n${stack}`);
+    try {
+      live.revive();
+    } catch (error) {
+      log.warn('could not revive the live HUD:', error && error.message);
+    }
+    return;
+  }
+
   const state = new HudState();
   const bridge = createHudBridge({
     exePath: OVERLAY_EXE,
@@ -310,10 +335,17 @@ export function apply(ctx) {
 
   ctx.effect(() => {
     log.info('starting desktop HUD bridge', bridge.stateFile);
-    bridge.start();
+    // Seed BEFORE starting the overlay: publish() rewrites the state file, so the
+    // overlay can never boot against a stale file left by a previous run (that
+    // made it exit instantly and burn the respawn budget in older builds).
     seedFromLiveAgents();
+    bridge.start();
+
+    const handle = { revive: () => bridge.revive() };
+    globalThis[LIVE_SYMBOL] = handle;
 
     return () => {
+      if (globalThis[LIVE_SYMBOL] === handle) delete globalThis[LIVE_SYMBOL];
       if (expiryTimer) clearTimeout(expiryTimer);
       expiryTimer = null;
       offStatus?.();

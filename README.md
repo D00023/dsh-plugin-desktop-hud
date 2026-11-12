@@ -117,7 +117,7 @@ The wire format is documented in [`PROTOCOL.md`](PROTOCOL.md); visual parameters
 # pure-logic state machine (16 tests)
 node test/state.test.mjs
 
-# state-file bridge + overlay supervision (6 tests)
+# state-file bridge + overlay supervision (8 tests)
 node test/bridge.test.mjs
 
 # rebuild the overlay from source (no .NET SDK needed — uses the C# compiler
@@ -159,6 +159,7 @@ Contributions are welcome. Keep the host side free of npm dependencies, run both
 | Just updated the plugin | Restart DSH; plugin code is only reloaded at startup. |
 | Card vanished after *退出小窗* | Intended. Restart DSH to bring it back. |
 | Card in a strange spot | It was dragged there. Drag it back, or delete `window-v1.json` while the HUD is closed. |
+| Two identical cards | Fixed in **v1.0.1**. Older versions could be mounted twice by DSH and spawn two overlays. Update the plugin: the overlay now holds a per-state-file named mutex (a second instance exits with code 42 without drawing), and the host half reuses a live bridge instead of creating another. `hud.log` records `duplicate apply detected` when DSH does try twice. |
 
 ## Known limitations
 

@@ -26,6 +26,8 @@ const WRITE_RETRY_MS = 25;
 const QUIT_GRACE_MS = 800;
 const RESPAWN_DELAY_MS = 2_000;
 const MAX_RESPAWNS = 5;
+/** HUD.exe exits with this code when another instance already owns the window (named mutex). */
+const DUPLICATE_EXIT_CODE = 42;
 /** While the executable is still missing (first-run/dev), retry rather than give up. */
 const MISSING_EXE_RETRY_MS = 10_000;
 
@@ -227,6 +229,12 @@ export function createHudBridge({
       onUserQuit?.();
       return;
     }
+    if (code === DUPLICATE_EXIT_CODE) {
+      // HUD.exe holds a named mutex per state file; this means another overlay
+      // already owns the window. Never fight it with a second window.
+      log.info('another HUD instance already owns the window; not spawning a duplicate');
+      return;
+    }
     if (respawns >= maxRespawns) {
       log.warn('overlay keeps exiting; giving up', code ?? signal);
       return;
@@ -271,6 +279,26 @@ export function createHudBridge({
     spawnOverlay();
   }
 
+  /**
+   * Make sure the overlay is alive again. Used by a duplicate bundle apply, which
+   * must reuse this bridge instead of spawning a second one. Returns true when it
+   * spawned an overlay.
+   */
+  function revive() {
+    if (disposed || userQuit) return false;
+    if (proc) {
+      resend();
+      return false;
+    }
+    if (respawnTimer) clearTimeout(respawnTimer);
+    respawnTimer = null;
+    respawns = 0;
+    removeQuietly(byeFile);
+    writeState();
+    spawnOverlay();
+    return true;
+  }
+
   /** Delete the state file (the overlay exits when it disappears), then kill it. */
   function dispose() {
     if (disposed) return;
@@ -302,6 +330,7 @@ export function createHudBridge({
     resend,
     dispose,
     start,
+    revive,
     killOverlay,
     get exitedByUser() {
       return userQuit;

@@ -203,6 +203,58 @@ test('v3 payload keeps the ordered task list and re-writes when it changes', asy
   }
 });
 
+test('duplicate-instance exit (42) never respawns a second window', async () => {
+  const dir = scratchDir();
+  const exePath = path.join(dir, 'HUD.exe');
+  fs.writeFileSync(exePath, 'fake');
+  const stateFile = path.join(dir, 'state.json');
+  const fake = fakeSpawn();
+  const bridge = createHudBridge({
+    exePath,
+    stateFile,
+    logger: quietLog,
+    spawnImpl: fake.impl,
+    respawnDelayMs: 20,
+    heartbeatMs: 60_000,
+  });
+  try {
+    bridge.publish({ mode: 'running', title: 'T', detail: '执行中', session: 's', since: 1 });
+    bridge.start();
+    assert.equal(fake.calls.length, 1);
+    // Another HUD already owns the window mutex for this state file.
+    fake.children[0].emit('exit', 42, null);
+    await sleep(80);
+    assert.equal(fake.calls.length, 1); // no respawn: the duplicate must not fight
+    assert.equal(bridge.overlayRunning, false);
+  } finally {
+    bridge.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('revive restarts a stopped overlay exactly once', async () => {
+  const dir = scratchDir();
+  const exePath = path.join(dir, 'HUD.exe');
+  fs.writeFileSync(exePath, 'fake');
+  const stateFile = path.join(dir, 'state.json');
+  const fake = fakeSpawn();
+  const bridge = createHudBridge({ exePath, stateFile, logger: quietLog, spawnImpl: fake.impl, heartbeatMs: 60_000 });
+  try {
+    bridge.publish({ mode: 'running', title: 'T', detail: '执行中', session: 's', since: 1 });
+    bridge.start();
+    bridge.killOverlay();
+    assert.equal(bridge.overlayRunning, false);
+    assert.equal(bridge.revive(), true);
+    assert.equal(fake.calls.length, 2);
+    assert.deepEqual(fake.calls[1].args, ['--state-file', stateFile]);
+    assert.equal(bridge.revive(), false); // already running: only re-paints
+    assert.equal(fake.calls.length, 2);
+  } finally {
+    bridge.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try {

@@ -114,7 +114,7 @@ DSH Host 插件（Cordis）                        HUD.exe（C# WPF）
 # 纯逻辑状态机（16 个测试）
 node test/state.test.mjs
 
-# 状态文件桥 + 小窗进程守护（6 个测试）
+# 状态文件桥 + 小窗进程守护（8 个测试）
 node test/bridge.test.mjs
 
 # 从源码重新编译小窗（无需 .NET SDK：用 Windows 自带的 .NET Framework 4.8
@@ -156,6 +156,7 @@ docs/images/        README 用到的截图
 | 刚更新过插件 | 重启 DSH；插件代码只在启动时加载 |
 | 选了「退出小窗」后不见了 | 这是预期行为，重启 DSH 才会恢复 |
 | 小窗位置奇怪 | 被拖动过。拖回去，或在关闭小窗后删除 `window-v1.json` |
+| 同时出现两个一模一样的小窗 | **v1.0.1 已修复**。旧版本可能被 DSH 重复挂载两次、拉起两个小窗。更新插件即可：现在 HUD.exe 按状态文件路径持命名互斥体（第二个实例直接以退出码 42 退出、不画窗口），Host 端也会复用已存在的桥而不是再建一个；DSH 真的重复挂载时 `hud.log` 会记录 `duplicate apply detected` 及调用栈 |
 
 ## 已知限制
 

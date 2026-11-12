@@ -136,3 +136,23 @@ and on state changes. If the window cannot be found either, display `"DSH"`.
 - Approvals that DSH auto-approves never flash on the card: the Host waits 600 ms
   (questions: 300 ms) before showing the "waiting for you" state and cancels it if the request
   settles first.
+
+## Single instance (2026-11-12)
+
+DSH was observed applying this bundle twice in one Host lifetime — two `starting desktop HUD
+bridge` lines 2.4 s apart in `hud.log`, each spawning its own `HUD.exe`, so the user saw two
+identical cards. Two independent guards now prevent a second window:
+
+- **Host half**: the first `apply()` owns the bridge. A later `apply()` in the same Host realm
+  logs `duplicate apply detected` (plus its stack, for diagnosis) and reuses the live bridge
+  (`bridge.revive()`) instead of building a second state machine.
+- **Overlay half**: `HUD.exe` takes the named mutex
+  `Local\dsh-desktop-hud-<first 8 bytes of sha1(lowercased state-file path)>` before creating
+  the window. A second overlay for the same state file exits with code **42** without showing
+  anything; the Host treats 42 as "another instance already owns the window" and does not
+  respawn it. Demo mode (`--demo`, `--demo-multi`) never takes the mutex, so it can run beside
+  the live card.
+
+The overlay is spawned only after the first state publish, so it never boots against a stale
+state file left by a previous run (which used to make it exit instantly and burn the respawn
+budget).

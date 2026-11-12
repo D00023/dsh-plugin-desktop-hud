@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-desktop-hud",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An always-on-top desktop card for DeepSeek Harness (DSH): see running tasks, approval requests and completed turns at a glance, with a multi-session task list.",
   "license": "MIT",
   "author": "D00023",
@@ -44,6 +44,7 @@
     "PROTOCOL.md",
     "README.md",
     "README.zh-CN.md",
+    "CHANGELOG.md",
     "LICENSE",
     "docs/images/*.png"
   ],
