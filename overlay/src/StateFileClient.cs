@@ -15,6 +15,12 @@ namespace DshDesktopHud
     internal sealed class StateFileClient : IDisposable
     {
         private const int PollMilliseconds = 400;
+        /// <summary>
+        /// A stale file at startup usually means "the Host has not published yet"
+        /// (e.g. the previous Host run left the file behind), not "the Host died".
+        /// Wait this long for a fresh heartbeat before treating it as fatal.
+        /// </summary>
+        private const double StartupStaleGraceSeconds = 5.0;
 
         private readonly string _path;
         private readonly double _staleSeconds;
@@ -29,6 +35,8 @@ namespace DshDesktopHud
         private DateTime _lastMtimeUtc = DateTime.MinValue;
         private DateTime _disappearedUtc = DateTime.MinValue;
         private bool _sawFile;
+        private bool _sawFreshHeartbeat;
+        private DateTime _staleWaitUtc = DateTime.MinValue;
         private bool _fatalRaised;
 
         public event Action<Dictionary<string, object>> StateChanged;
@@ -151,10 +159,29 @@ namespace DshDesktopHud
             double staleAge = (now - mtime).TotalSeconds;
             if (staleAge >= _staleSeconds)
             {
+                if (!_sawFreshHeartbeat)
+                {
+                    // Startup race: the bridge may be about to publish its first state.
+                    // Tolerate a brief stale window instead of exiting immediately.
+                    if (_staleWaitUtc == DateTime.MinValue)
+                    {
+                        _staleWaitUtc = now;
+                        Trace.Log("state file stale at startup age=" + staleAge.ToString("0.0")
+                            + "s -> waiting up to " + StartupStaleGraceSeconds.ToString("0.0") + "s");
+                        return;
+                    }
+                    if ((now - _staleWaitUtc).TotalSeconds < StartupStaleGraceSeconds)
+                    {
+                        return;
+                    }
+                }
                 Trace.Log("state file stale age=" + staleAge.ToString("0.0") + "s -> exit");
                 RaiseFatal();
                 return;
             }
+
+            _sawFreshHeartbeat = true;
+            _staleWaitUtc = DateTime.MinValue;
 
             if (mtime <= _lastMtimeUtc) return; // no new heartbeat yet
 

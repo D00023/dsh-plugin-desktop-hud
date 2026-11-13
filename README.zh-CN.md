@@ -152,6 +152,7 @@ docs/images/        README 用到的截图
 | 现象 | 排查 |
 |---|---|
 | 小窗始终没出现 | 看 `%LOCALAPPDATA%\dsh-desktop-hud\hud.log`（插件生命周期日志，256KB 轮转）。有 `overlay started pid=…` 说明插件已成功拉起；也可以手动运行 `overlay\bin\HUD.exe --state-file "%LOCALAPPDATA%\dsh-desktop-hud\state.json"` |
+| 重启 DSH 后小窗一直不出现 | **v1.0.2 已修复**。旧版本启动时还没有可发布的状态，小窗读到上一轮遗留的旧文件、判定过期后自行退出，重试耗尽便彻底放弃。现在启动即写占位状态并开始心跳，重试耗尽也会按退避继续尝试。更新插件后重启一次 DSH 即可 |
 | 小窗在但状态不更新 | `state.json` 的 `ts` 应每 2 秒变化；不变说明 Host 插件没在跑（或被禁用） |
 | 刚更新过插件 | 重启 DSH；插件代码只在启动时加载 |
 | 选了「退出小窗」后不见了 | 这是预期行为，重启 DSH 才会恢复 |

@@ -30,6 +30,19 @@ const MAX_RESPAWNS = 5;
 const DUPLICATE_EXIT_CODE = 42;
 /** While the executable is still missing (first-run/dev), retry rather than give up. */
 const MISSING_EXE_RETRY_MS = 10_000;
+/**
+ * After the respawn budget is exhausted the bridge keeps retrying with a growing
+ * backoff instead of stopping forever: a permanently dead supervisor is worse
+ * than a few extra attempts, and real state changes may recover the overlay later.
+ */
+const GIVE_UP_RETRY_MS = 20_000;
+const GIVE_UP_RETRY_MAX_MS = 60_000;
+/**
+ * A duplicate-instance exit (42) is usually a zombie overlay from the previous
+ * Host run that still holds the mutex for a few seconds. Retry the takeover
+ * instead of surrendering the window for the rest of the session.
+ */
+const DUPLICATE_RETRY_MS = 10_000;
 
 /** Blocking sleep for the (rare) transient rename retry; keeps publish synchronous. */
 function sleepSync(ms) {
@@ -87,6 +100,9 @@ export function createHudBridge({
   quitGraceMs = QUIT_GRACE_MS,
   respawnDelayMs = RESPAWN_DELAY_MS,
   maxRespawns = MAX_RESPAWNS,
+  giveUpRetryMs = GIVE_UP_RETRY_MS,
+  giveUpRetryMaxMs = GIVE_UP_RETRY_MAX_MS,
+  duplicateRetryMs = DUPLICATE_RETRY_MS,
 } = {}) {
   if (!exePath) exePath = DEFAULT_EXE;
   if (!stateFile) stateFile = process.env.DSH_HUD_STATE_FILE || path.join(defaultStateDir(), 'state.json');
@@ -106,8 +122,27 @@ export function createHudBridge({
   let userQuit = false;
   let respawns = 0;
   let respawnTimer = null;
+  let giveUpDelay = giveUpRetryMs;
+  let duplicateDelay = duplicateRetryMs;
   let heartbeatTimer = null;
   let everSpawned = false;
+
+  /**
+   * A minimal idle payload written before the first real publish. Without it the
+   * first spawn could read a stale state file left by the previous Host run and
+   * exit immediately (that is exactly the "no HUD after DSH start" bug).
+   */
+  function placeholderState() {
+    return {
+      v: 3,
+      mode: 'idle',
+      title: 'DeepSeek Harness',
+      detail: '',
+      session: '',
+      since: Date.now(),
+      tasks: [],
+    };
+  }
 
   function ensureDir() {
     try {
@@ -126,7 +161,7 @@ export function createHudBridge({
    * in-place rewrite (the overlay ignores a half-written line).
    */
   function writeState() {
-    if (!lastVisible) return false;
+    if (!lastVisible) lastVisible = placeholderState();
     const payload = { ...lastVisible, ts: Date.now() };
     const serialized = `${JSON.stringify(payload)}\n`;
     const tmpFile = `${stateFile}.tmp`;
@@ -231,12 +266,25 @@ export function createHudBridge({
     }
     if (code === DUPLICATE_EXIT_CODE) {
       // HUD.exe holds a named mutex per state file; this means another overlay
-      // already owns the window. Never fight it with a second window.
-      log.info('another HUD instance already owns the window; not spawning a duplicate');
+      // already owns the window. Never fight it with a second window, but do
+      // retry later: a zombie overlay from the previous Host run releases the
+      // mutex as soon as its state file disappears.
+      log.info('another HUD instance already owns the window; will retry later');
+      const delay = duplicateDelay;
+      duplicateDelay = Math.min(giveUpRetryMaxMs, Math.round(duplicateDelay * 2));
+      respawnTimer = setTimeout(spawnOverlay, delay);
+      respawnTimer.unref?.();
       return;
     }
     if (respawns >= maxRespawns) {
-      log.warn('overlay keeps exiting; giving up', code ?? signal);
+      respawns = 0;
+      const delay = giveUpDelay;
+      giveUpDelay = Math.min(giveUpRetryMaxMs, Math.round(giveUpDelay * 1.5));
+      log.warn(
+        `overlay keeps exiting (${code ?? signal}); retrying in ${Math.round(delay / 1000)}s`,
+      );
+      respawnTimer = setTimeout(spawnOverlay, delay);
+      respawnTimer.unref?.();
       return;
     }
     respawns += 1;
@@ -275,7 +323,13 @@ export function createHudBridge({
     if (disposed) return;
     ensureDir();
     removeQuietly(byeFile);
+    giveUpDelay = giveUpRetryMs;
+    duplicateDelay = duplicateRetryMs;
     writeState();
+    // The heartbeat must run even before the first publish: otherwise an idle
+    // startup (no session events yet) lets the file go stale while the overlay
+    // is alive, and every spawned HUD exits after the stale limit.
+    startHeartbeat();
     spawnOverlay();
   }
 
@@ -293,8 +347,11 @@ export function createHudBridge({
     if (respawnTimer) clearTimeout(respawnTimer);
     respawnTimer = null;
     respawns = 0;
+    giveUpDelay = giveUpRetryMs;
+    duplicateDelay = duplicateRetryMs;
     removeQuietly(byeFile);
     writeState();
+    startHeartbeat();
     spawnOverlay();
     return true;
   }

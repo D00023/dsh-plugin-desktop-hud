@@ -155,6 +155,7 @@ Contributions are welcome. Keep the host side free of npm dependencies, run both
 | Symptom | What to check |
 |---|---|
 | Card never appears | `%LOCALAPPDATA%\dsh-desktop-hud\hud.log` (plugin lifecycle log, rotated at 256 KB). `overlay started pid=…` means the plugin launched it. You can also run `overlay\bin\HUD.exe --state-file "%LOCALAPPDATA%\dsh-desktop-hud\state.json"` by hand. |
+| Card never appears *after a DSH restart* | Fixed in **v1.0.2**. Older versions wrote no state at startup, so the overlay read the previous run's stale file, exited, and the bridge gave up permanently. The bridge now writes a placeholder state, heartbeats from the start, and keeps retrying with backoff instead of giving up. Update the plugin and restart DSH once. |
 | Card visible but frozen | `state.json`'s `ts` should change every 2 s. If it doesn't, the host plugin isn't running (or was disabled). |
 | Just updated the plugin | Restart DSH; plugin code is only reloaded at startup. |
 | Card vanished after *退出小窗* | Intended. Restart DSH to bring it back. |

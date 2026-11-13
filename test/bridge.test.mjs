@@ -203,7 +203,7 @@ test('v3 payload keeps the ordered task list and re-writes when it changes', asy
   }
 });
 
-test('duplicate-instance exit (42) never respawns a second window', async () => {
+test('duplicate-instance exit (42) waits, then retries the takeover', async () => {
   const dir = scratchDir();
   const exePath = path.join(dir, 'HUD.exe');
   fs.writeFileSync(exePath, 'fake');
@@ -215,17 +215,20 @@ test('duplicate-instance exit (42) never respawns a second window', async () => 
     logger: quietLog,
     spawnImpl: fake.impl,
     respawnDelayMs: 20,
+    duplicateRetryMs: 60,
     heartbeatMs: 60_000,
   });
   try {
     bridge.publish({ mode: 'running', title: 'T', detail: '执行中', session: 's', since: 1 });
     bridge.start();
     assert.equal(fake.calls.length, 1);
-    // Another HUD already owns the window mutex for this state file.
+    // A zombie HUD from the previous Host run still owns the window mutex.
     fake.children[0].emit('exit', 42, null);
-    await sleep(80);
-    assert.equal(fake.calls.length, 1); // no respawn: the duplicate must not fight
+    await sleep(30);
+    assert.equal(fake.calls.length, 1); // not immediate: never two windows at once
     assert.equal(bridge.overlayRunning, false);
+    await sleep(90);
+    assert.equal(fake.calls.length, 2); // takeover retried once the zombie is gone
   } finally {
     bridge.dispose();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -249,6 +252,67 @@ test('revive restarts a stopped overlay exactly once', async () => {
     assert.deepEqual(fake.calls[1].args, ['--state-file', stateFile]);
     assert.equal(bridge.revive(), false); // already running: only re-paints
     assert.equal(fake.calls.length, 2);
+  } finally {
+    bridge.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('start writes a fresh placeholder so a stale leftover file cannot kill the overlay', async () => {
+  const dir = scratchDir();
+  const exePath = path.join(dir, 'HUD.exe');
+  fs.writeFileSync(exePath, 'fake');
+  const stateFile = path.join(dir, 'state.json');
+  // A previous Host run left this behind, one hour old: the exact startup bug.
+  fs.writeFileSync(
+    stateFile,
+    JSON.stringify({ v: 3, mode: 'idle', title: 'old', detail: '', session: '', since: 1, tasks: [] }) + '\n',
+  );
+  const hourAgo = new Date(Date.now() - 3_600_000);
+  fs.utimesSync(stateFile, hourAgo, hourAgo);
+
+  const fake = fakeSpawn();
+  const bridge = createHudBridge({ exePath, stateFile, logger: quietLog, spawnImpl: fake.impl, heartbeatMs: 60_000 });
+  try {
+    bridge.start();
+    const written = readState(stateFile);
+    assert.equal(written.v, 3);
+    assert.equal(written.mode, 'idle');
+    assert.equal(written.ts > Date.now() - 10_000, true);
+    assert.equal(Date.now() - fs.statSync(stateFile).mtimeMs < 10_000, true);
+    assert.deepEqual(fake.calls[0].args, ['--state-file', stateFile]);
+  } finally {
+    bridge.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('keeps retrying after the respawn budget instead of dying forever', async () => {
+  const dir = scratchDir();
+  const exePath = path.join(dir, 'HUD.exe');
+  fs.writeFileSync(exePath, 'fake');
+  const stateFile = path.join(dir, 'state.json');
+  const fake = fakeSpawn();
+  const bridge = createHudBridge({
+    exePath,
+    stateFile,
+    logger: quietLog,
+    spawnImpl: fake.impl,
+    respawnDelayMs: 5,
+    maxRespawns: 1,
+    giveUpRetryMs: 30,
+    heartbeatMs: 60_000,
+  });
+  try {
+    bridge.publish({ mode: 'running', title: 'T', detail: 'running', session: 's', since: 1 });
+    bridge.start();
+    assert.equal(fake.calls.length, 1);
+    fake.children[0].emit('exit', 0, null); // one respawn left
+    await sleep(40);
+    assert.equal(fake.calls.length, 2);
+    fake.children[1].emit('exit', 0, null); // budget exhausted -> backoff retry
+    await sleep(90);
+    assert.equal(fake.calls.length >= 3, true);
   } finally {
     bridge.dispose();
     fs.rmSync(dir, { recursive: true, force: true });

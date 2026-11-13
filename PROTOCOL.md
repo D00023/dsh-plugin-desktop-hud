@@ -149,10 +149,36 @@ identical cards. Two independent guards now prevent a second window:
 - **Overlay half**: `HUD.exe` takes the named mutex
   `Local\dsh-desktop-hud-<first 8 bytes of sha1(lowercased state-file path)>` before creating
   the window. A second overlay for the same state file exits with code **42** without showing
-  anything; the Host treats 42 as "another instance already owns the window" and does not
-  respawn it. Demo mode (`--demo`, `--demo-multi`) never takes the mutex, so it can run beside
-  the live card.
+  anything; the Host treats 42 as "another instance owns the window" and retries the takeover
+  later (see *Startup liveness*) instead of opening a second window. Demo mode (`--demo`,
+  `--demo-multi`) never takes the mutex, so it can run beside the live card.
 
-The overlay is spawned only after the first state publish, so it never boots against a stale
+The overlay is spawned only after the first state file write, so it never boots against a stale
 state file left by a previous run (which used to make it exit instantly and burn the respawn
 budget).
+
+## Startup liveness (2026-11-13)
+
+A Host start may produce **no** publish at all before the overlay is spawned (`seedFromLiveAgents()`
+can find no agents yet). The bridge therefore guarantees liveness on its own:
+
+1. `writeState()` always has something to write: before the first publish it writes a placeholder
+   `{ v: 3, mode: "idle", title: "DeepSeek Harness", detail: "", session: "", since: now, tasks: [] }`.
+   A fresh mtime exists from the first spawn on.
+2. `start()` and `revive()` call `startHeartbeat()` immediately, so the file is refreshed every
+   2 s even while idle. Without this the file would age past the overlay's stale limit (10 s by
+   default) and every spawned overlay would exit by itself.
+3. Giving up is never permanent: after `MAX_RESPAWNS` the bridge backs off
+   `GIVE_UP_RETRY_MS = 20 s`, multiplying by 1.5 up to `60 s`, then tries again. A late publish
+   therefore still brings the window back without restarting DSH.
+4. Exit code **42** (another overlay owns the mutex) is treated the same way, with its own delay
+   (`DUPLICATE_RETRY_MS = 10 s`, doubled up to 60 s per attempt): it is almost always a zombie
+   overlay from the previous Host run that releases the mutex as soon as the new state file
+   disappears. The Host never opens a second window while waiting.
+5. `HUD.exe` itself is tolerant at boot: a stale file present when it starts does not kill it
+   immediately — it logs `state file stale at startup age=…s -> waiting up to 5.0s` and only
+   fails after that grace, in case the Host is still writing its first state.
+
+Regression tests: `test/bridge.test.mjs`
+`start writes a fresh placeholder…`, `keeps retrying after the respawn budget…`,
+`duplicate-instance exit (42) waits, then retries the takeover`.
